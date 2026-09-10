@@ -163,6 +163,7 @@ async def main() -> None:
     args = parser.parse_args()
 
     hits = await scan(args.seconds)
+    seen = len(hits)
     if not args.all:
         hits = [h for h in hits if looks_interesting(h)]
 
@@ -170,18 +171,35 @@ async def main() -> None:
         print(json.dumps([vars(h) for h in hits], indent=2))
         return
 
-    if not hits:
-        print("Nothing matched. Re-run with --all, and check the hat is powered on,")
-        print("unplugged from USB, and not already connected to a phone.")
-        if sys.platform == "darwin":
-            print()
-            print("On macOS, a scan that finds *nothing at all* usually means the")
-            print("terminal lacks Bluetooth access: System Settings > Privacy &")
-            print("Security > Bluetooth, and enable your terminal app.")
+    if hits:
+        report(hits)
+        if seen > len(hits):
+            print(f"({seen - len(hits)} other device(s) hidden; --all shows them.)")
+        print("Next: python3 tools/ledhat_gatt.py <address>")
         return
 
-    report(hits)
-    print("Next: python3 tools/ledhat_gatt.py <address>")
+    # "The radio saw nothing" and "nothing looked like an LED display" have
+    # completely different causes, so never report them with the same message.
+    if seen:
+        print(f"Saw {seen} BLE device(s), but none looked like an LED display.")
+        print()
+        print("Re-run with --all to see them: the hat may advertise under an opaque")
+        print("name (a bare MAC, 'BT-05', a model number) that the filter misses.")
+        print("If it is not in the --all list either, the hat is not advertising --")
+        print("power cycle it, unplug it from USB, or hold its button for pairing")
+        print("mode. Some boards only advertise for ~60s after power-on.")
+        return
+
+    print("Saw no BLE devices at all -- that is a host problem, not the hat.")
+    if sys.platform == "darwin":
+        print()
+        print("On macOS this is almost always Bluetooth permission: System Settings")
+        print("> Privacy & Security > Bluetooth, and enable your terminal app. If it")
+        print("is already enabled there, quit and reopen the terminal -- the grant")
+        print("only applies to a newly launched process.")
+    else:
+        print("Check the adapter is up (bluetoothctl list) and not blocked")
+        print("(rfkill list bluetooth).")
 
 
 if __name__ == "__main__":

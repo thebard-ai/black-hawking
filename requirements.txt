@@ -1,0 +1,4 @@
+# Cross-platform BLE (Linux/BlueZ, macOS CoreBluetooth, Windows WinRT).
+bleak>=0.22
+# Only needed once you start rendering text/images to the panel.
+pillow>=10.0

@@ -1,0 +1,10 @@
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+
+# Capture artifacts from protocol work — keep these off the remote.
+*.log
+btsnoop_hci.log
+bugreport*.zip
+*.apk

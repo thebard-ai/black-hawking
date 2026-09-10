@@ -8,7 +8,10 @@ Findings for the specific hardware in hand. Method lives in
 Eleven devices in range. Nine were immediately excludable: manufacturer ID `0x004c`
 (Apple) on seven, `0x0075` (Samsung) on one, and a named iPad. Two candidates:
 
-### `DSD-3AF2B6` — the LED hat, pending confirmation
+### `DSD-3AF2B6` — the LED hat, CONFIRMED
+
+Confirmed 2026-09-10 by `ledhat_scan.py --ab`: of eleven devices in range, this was
+the only one present before powering the hat off and absent after.
 
 Advertisement: service `0000fee9`, manufacturer `0x5254` payload `0027`, ~-66 dBm.
 (`0x5254` is not a SIG-assigned company ID; cheap boards routinely put junk in that
@@ -64,9 +67,10 @@ with earbuds, not a display. Almost certainly a neighbour's earbuds.
 
 ## Open questions
 
-1. **Is `DSD-3AF2B6` actually the hat?** QPP is generic — smart scales, toys and
-   thermometers use the same transport. Confirm with `ledhat_scan.py --ab`, which
-   scans either side of a power cycle and reports what disappeared.
-2. **Is the 16-byte notify a nonce?** Connect twice and compare.
-3. **Which of the three write characteristics takes display commands?**
-   `…9600`, `…960a`, `…960b` and `ae01` are four candidate sinks.
+1. ~~Is `DSD-3AF2B6` actually the hat?~~ **Confirmed** by power-cycle A/B.
+2. **Is the 16-byte notify a nonce?** Run `ledhat_gatt.py <addr> --probe`, which
+   connects three times and compares the opening payload. Changing per connection
+   means an auth handshake stands between us and the display commands; fixed means
+   it is an identifier we can ignore.
+3. **Which write characteristic takes display commands?** `…9600`, `…960a`, `…960b`
+   and `ae01` are four candidate sinks. The app's own frames will say which.

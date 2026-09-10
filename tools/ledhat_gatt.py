@@ -67,15 +67,16 @@ async def dump(client: BleakClient) -> list[str]:
     return notifiable
 
 
-async def subscribe(client: BleakClient, uuids: list[str]) -> list[str]:
+async def subscribe(client: BleakClient, uuids: list[str], handler=None) -> list[str]:
     """Subscribe to every notify characteristic; return the ones that took."""
     def on_notify(sender, data: bytearray) -> None:
         print(f"[{stamp()}] {sender.uuid}  {render(bytes(data))}")
 
+    handler = handler or on_notify
     started: list[str] = []
     for uuid in uuids:
         try:
-            await client.start_notify(uuid, on_notify)
+            await client.start_notify(uuid, handler)
             started.append(uuid)
         except Exception as exc:  # noqa: BLE001
             print(f"could not subscribe to {uuid}: {exc}")
@@ -86,6 +87,83 @@ async def unsubscribe(client: BleakClient, uuids: list[str]) -> None:
     for uuid in uuids:
         with contextlib.suppress(Exception):
             await client.stop_notify(uuid)
+
+
+VERDICTS = {
+    "inconsistent": (
+        "inconsistent - did not greet on every connection.",
+        ("Re-run with more rounds; an unreliable greeting classifies nothing.",),
+    ),
+    "stable": (
+        "STABLE across every connection.",
+        ("An identifier or status blob. Not a handshake; ignore it.",),
+    ),
+    "nonce": (
+        "CHANGES every connection.",
+        ("A challenge/nonce. Expect an auth handshake before the",
+         "device accepts display commands."),
+    ),
+}
+
+
+def classify_greeting(seen: list[bytes | None]) -> str:
+    """Decide what a device's opening notification is, from one per connection."""
+    if not seen or any(v is None for v in seen):
+        return "inconsistent"
+    return "stable" if len(set(seen)) == 1 else "nonce"
+
+
+def notifiable_uuids(client: BleakClient) -> list[str]:
+    return [
+        char.uuid
+        for service in client.services
+        for char in service.characteristics
+        if {"notify", "indicate"} & set(char.properties)
+    ]
+
+
+async def probe_greeting(address: str, rounds: int, timeout: float) -> None:
+    """Connect several times over and compare the device's opening notification.
+
+    A payload that changes every connection is a challenge/nonce, and commands
+    will need a handshake first. One that never changes is an identifier or a
+    status blob, and can be ignored. Telling those apart decides whether the
+    protocol work starts with crypto or not, so it is worth the thirty seconds.
+    """
+    greetings: list[dict[str, bytes]] = []
+
+    for round_number in range(1, rounds + 1):
+        first: dict[str, bytes] = {}
+
+        def capture(sender, data: bytearray) -> None:
+            # Only the opening payload per characteristic; later traffic is noise.
+            first.setdefault(sender.uuid, bytes(data))
+
+        async with BleakClient(address, timeout=timeout) as client:
+            started = await subscribe(client, notifiable_uuids(client), capture)
+            await asyncio.sleep(2.0)
+            await unsubscribe(client, started)
+
+        print(f"connection {round_number}:")
+        for uuid, payload in sorted(first.items()):
+            print(f"  {uuid}  {render(payload)}")
+        if not first:
+            print("  (silence)")
+        greetings.append(first)
+        if round_number < rounds:
+            await asyncio.sleep(1.0)
+
+    every_uuid = sorted({u for g in greetings for u in g})
+    if not every_uuid:
+        print("\nThe device never spoke first. Nothing to classify.")
+        return
+
+    print()
+    for uuid in every_uuid:
+        verdict = classify_greeting([g.get(uuid) for g in greetings])
+        print(f"{uuid}: {VERDICTS[verdict][0]}")
+        for line in VERDICTS[verdict][1]:
+            print(f"   {line}")
 
 
 async def main() -> None:
@@ -100,7 +178,14 @@ async def main() -> None:
                         help="use write-without-response")
     parser.add_argument("--timeout", type=float, default=20.0,
                         help="connection timeout")
+    parser.add_argument("--probe", nargs="?", type=int, const=3, metavar="N",
+                        help="connect N times (default 3) and report whether the "
+                             "device's opening notification is a nonce or fixed")
     args = parser.parse_args()
+
+    if args.probe:
+        await probe_greeting(args.address, args.probe, args.timeout)
+        return
 
     if bool(args.write) != bool(args.hex):
         parser.error("--write and --hex must be given together")

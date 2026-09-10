@@ -68,7 +68,16 @@ FAMILIES: tuple[Family, ...] = (
 GENERIC_SERIAL_SERVICES = {
     BASE_UUID.format("fff0"): "Generic 0xFFF0 vendor serial service",
     BASE_UUID.format("ffe0"): "Generic 0xFFE0 vendor serial service (HM-10 style)",
+    BASE_UUID.format("fee9"): "Quintic/NXP QPP serial service (QN902x board)",
+    BASE_UUID.format("ae00"): "QN (Quintic) vendor serial service",
     "6e400001-b5a3-f393-e0a9-e50e24dcca9e": "Nordic UART Service (NUS)",
+}
+
+# Services that positively rule a device OUT. A neighbour's earbuds can carry a
+# vendor serial service too, so it is worth naming the ones that settle it.
+DISQUALIFYING_SERVICES = {
+    BASE_UUID.format("fe2c"): "Google Fast Pair - an audio accessory, not a display",
+    BASE_UUID.format("fd6f"): "Exposure Notification - a phone, not a display",
 }
 
 
@@ -96,6 +105,10 @@ def classify(name: str, services: list[str]) -> tuple[Family | None, list[str]]:
         if fam.services and lowered.issuperset(s.lower() for s in fam.services):
             return fam, ["matched on service UUID only; name did not match"]
 
+    for uuid, description in DISQUALIFYING_SERVICES.items():
+        if uuid in lowered:
+            return None, [f"RULED OUT: {description}"]
+
     hints = [
         description
         for uuid, description in GENERIC_SERIAL_SERVICES.items()
@@ -106,6 +119,8 @@ def classify(name: str, services: list[str]) -> tuple[Family | None, list[str]]:
 
 def looks_interesting(hit: Hit) -> bool:
     """Filter out the ambient noise of headphones, watches and beacons."""
+    if any(h.startswith("RULED OUT") for h in hit.hints):
+        return False
     if hit.family or hit.hints:
         return True
     keywords = ("led", "matrix", "display", "screen", "badge", "sign", "magic")
@@ -155,12 +170,56 @@ def report(hits: list[Hit]) -> None:
         print()
 
 
+async def prompt(message: str) -> None:
+    """Block for Enter without stalling the event loop."""
+    await asyncio.get_running_loop().run_in_executor(None, input, message)
+
+
+async def run_ab(seconds: float) -> None:
+    """Scan twice around a power cycle; whatever vanishes is your device.
+
+    Signal strength alone cannot tell your hat from a neighbour's earbuds, and
+    a vendor serial service is not proof either. Turning the thing off is.
+    """
+    print("Make sure the hat is powered ON and unplugged from USB.")
+    await prompt("Press Enter to scan... ")
+    before = {h.address: h for h in await scan(seconds)}
+    print(f"  saw {len(before)} device(s)\n")
+
+    print("Now power the hat OFF (or walk it out of range).")
+    await prompt("Press Enter to scan again... ")
+    after = {h.address: h for h in await scan(seconds)}
+    print(f"  saw {len(after)} device(s)\n")
+
+    vanished = [before[a] for a in before.keys() - after.keys()]
+    if not vanished:
+        print("Nothing disappeared. Either the hat never advertised in the first")
+        print("scan, or it is still powered. Check it and run --ab again.")
+        return
+
+    # A weak device can drop out of any single scan by chance, so rank by signal:
+    # the hat was a metre from the laptop, a flaky neighbour's device was not.
+    vanished.sort(key=lambda h: -h.rssi)
+    print(f"{len(vanished)} device(s) present before and gone after:\n")
+    report(vanished)
+    if len(vanished) > 1:
+        print("More than one dropped out. The strongest signal is the best bet;")
+        print("re-run --ab to confirm - genuine drop-outs repeat, chance ones do not.")
+
+
 async def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--seconds", type=float, default=10.0, help="scan duration")
     parser.add_argument("--all", action="store_true", help="show every BLE device")
     parser.add_argument("--json", action="store_true", help="emit JSON instead")
+    parser.add_argument("--ab", action="store_true",
+                        help="scan before and after powering the hat off, and "
+                             "report what disappeared")
     args = parser.parse_args()
+
+    if args.ab:
+        await run_ab(args.seconds)
+        return
 
     hits = await scan(args.seconds)
     seen = len(hits)

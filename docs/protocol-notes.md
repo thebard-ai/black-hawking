@@ -12,10 +12,27 @@ OEM boards. Identify which one you have and you may not have to reverse anything
 | iDotMatrix pixel panels | `IDM-*` | vendor serial | Fully reverse engineered — [python3-idotmatrix-library](https://github.com/derkalle4/python3-idotmatrix-library) |
 | B1248 / LSLED name badges | `LSLED`, `B1248` | vendor serial | [Documented protocol writeup](https://cat-in-136.github.io/2020/07/b1248-led-name-badge-protocol-reverse-engineering.html) |
 | Magic Display (`com.tirohk.magicdisplay`, Tianlang / Shenzhen) | varies | vendor serial | No public driver found — this is the one that needs work |
+| Quintic/NXP QN902x on QPPS | varies | service `0xFEE9`, chars `d44bc439-…-9254161296xx`; often `0xAE00` too | Transport is [documented](https://www.nxp.com/docs/en/application-note/AN11846.pdf), but it is a generic pipe — the frames inside it are still per-vendor |
 
 The QR code on `api.e-toys.cn/page/app/64` is a vendor landing page that hands you an
 APK plus an App Store link. The vendor site tells you nothing about the protocol; the
 device's own BLE advertisement tells you everything you need to start.
+
+See [`device-log.md`](device-log.md) for what the hardware in hand actually turned
+out to be.
+
+## Step 0 — prove which device is yours
+
+A crowded 2.4GHz band means signal strength is a hint, not an answer, and a vendor
+serial service is not proof either — a neighbour's earbuds can carry one. Scan either
+side of a power cycle instead:
+
+```sh
+python3 tools/ledhat_scan.py --ab
+```
+
+It scans, waits while you switch the hat off, scans again, and reports what
+disappeared. That is the only cheap test that actually identifies your device.
 
 ## Step 1 — identify over the air
 

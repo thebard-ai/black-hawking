@@ -27,6 +27,15 @@ python3 tools/ledhat_scan.py --seconds 15
 The hat must be powered on, **unplugged from USB** (most of these boards disable the
 radio while charging), and not already connected to a phone.
 
+**On macOS**, grant your terminal Bluetooth access first:
+System Settings → Privacy & Security → Bluetooth → enable Terminal / iTerm / your IDE.
+Without it the scan runs happily and finds nothing at all.
+
+Also on macOS: CoreBluetooth does not expose hardware MAC addresses. The "address"
+you get back is a per-Mac UUID (`A1B2C3D4-…`). It is stable on that Mac and works
+everywhere these tools want an address, but it will not match a MAC quoted in someone
+else's writeup.
+
 If the name matches a known family, stop reverse engineering and use the existing
 driver. If it does not, continue.
 
@@ -46,37 +55,76 @@ What you are looking for:
 Almost all of these boards speak a framed byte protocol on a single write
 characteristic, chunked to the ~20-byte BLE MTU.
 
-## Step 3 — capture the vendor app's traffic
+## Step 3 — read the app without running it (Mac, no phone)
 
-You do not need to decompile the APK to learn the protocol. You need the bytes it
-sends. Use a **burner Android device** (see the risk note in the root README), then:
+You do not need to install anything to learn the protocol. An APK is a zip file, and
+these vendor apps are usually not obfuscated. Decompiling it is reading, not executing:
+
+```sh
+brew install jadx apktool
+jadx -d app_src app.apk        # decompiled Java
+apktool d app.apk -o app_res   # resources and smali, if you need them
+```
+
+Then grep the decompiled source for the UUIDs you found in step 2:
+
+```sh
+grep -rin "fff1\|fff0\|ffe1\|6e400001" app_src/
+```
+
+The class that references the write characteristic is the protocol encoder. Chinese
+OEM apps of this class are usually thin wrappers over a `BluetoothManager` helper with
+method names like `sendText`, `sendPic`, `setBright` — often in plain sight.
+
+This is the highest-value step per unit of risk: you never run the vendor's code.
+
+## Step 4 — capture live frames (pick a route)
+
+Only needed if step 3 leaves the encoding ambiguous — usually the image/bitmap packing
+rather than the simple commands.
+
+| Route | Needs | Vendor code runs on | Notes |
+|---|---|---|---|
+| **nRF52840 dongle + Wireshark** | ~$10–25 dongle | nothing you own | Pure over-the-air sniffing, driven entirely from the Mac. Cleanest, but you wait for shipping. |
+| **iPhone + PacketLogger** | an iPhone, Xcode Additional Tools | your iPhone | App Store build (reviewed, sandboxed) rather than a sideloaded APK — materially lower exposure than the Android route. Delete the app after capture. |
+| **Burner Android + HCI snoop log** | a spare Android device | the burner | Most direct, but needs a device you're willing to dirty. |
+| ~~Android emulator on the Mac~~ | — | — | **Does not work.** No mainstream emulator passes host Bluetooth through to the guest, so the emulated app cannot reach the physical hat. |
+
+### Route: nRF52840 dongle
+
+Flash the [nRF Sniffer for Bluetooth LE](https://www.nordicsemi.com/Products/Development-tools/nRF-Sniffer-for-Bluetooth-LE)
+firmware, install its Wireshark extcap plugin, then sniff while a phone or the Mac
+drives the hat. Filter on `btatt`. Start the capture *before* the connection is
+established — the sniffer needs to see the connection event to follow the link.
+
+### Route: iPhone + PacketLogger
+
+1. Download **Additional Tools for Xcode** from developer.apple.com; PacketLogger is
+   in the `Hardware` folder.
+2. Connect the iPhone by cable, then **File → New iOS Trace**.
+3. Drive the app: connect, set one pixel, set text, change brightness, change speed.
+4. Export to BTSnoop and open in Wireshark, or read it in PacketLogger directly.
+
+PacketLogger also traces the **Mac's own** Bluetooth stack, which is how you verify
+the frames your Python sends in step 5.
+
+### Route: burner Android
 
 1. Developer options → **Enable Bluetooth HCI snoop log**.
 2. Toggle Bluetooth off and on.
-3. Drive the app: connect, set one pixel, set text, change brightness, change speed.
-   Change **one variable at a time** and write down what you did and when.
+3. Drive the app as above.
 4. Pull the log:
    ```sh
    adb bugreport bugreport.zip     # snoop log lives inside on modern Android
    # older devices: adb pull /sdcard/btsnoop_hci.log
    ```
-5. Open in Wireshark, filter `btatt.opcode == 0x52 || btatt.opcode == 0x12`
-   (write command / write request) and read the payloads.
 
-The single-variable discipline is what makes this tractable: brightness 1 vs 2 differs
-in one byte, and that byte is the brightness field.
+### Whichever route you take
 
-## Step 4 — static analysis of the APK (only if step 3 stalls)
-
-```sh
-apktool d app.apk -o app_src          # resources, smali
-jadx-gui app.apk                      # decompiled Java
-```
-
-Grep the decompiled source for the UUIDs you found in step 2. The class that
-references the write characteristic is the protocol encoder. Chinese OEM apps of this
-class are usually thin wrappers over a `BluetoothManager` helper with method names
-like `sendText`, `sendPic`, `setBright` — often not obfuscated at all.
+Change **one variable at a time** and write down what you did and when. In Wireshark,
+filter `btatt.opcode == 0x52 || btatt.opcode == 0x12` (write command / write request)
+and read the payloads. Brightness 1 vs 2 differs in one byte, and that byte is the
+brightness field. That discipline is what makes this tractable.
 
 ## Step 5 — replay and confirm
 

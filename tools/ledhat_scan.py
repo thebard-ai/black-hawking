@@ -13,6 +13,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import json
+import sys
 from dataclasses import dataclass, field
 
 from bleak import BleakScanner
@@ -172,6 +173,11 @@ async def main() -> None:
     if not hits:
         print("Nothing matched. Re-run with --all, and check the hat is powered on,")
         print("unplugged from USB, and not already connected to a phone.")
+        if sys.platform == "darwin":
+            print()
+            print("On macOS, a scan that finds *nothing at all* usually means the")
+            print("terminal lacks Bluetooth access: System Settings > Privacy &")
+            print("Security > Bluetooth, and enable your terminal app.")
         return
 
     report(hits)

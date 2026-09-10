@@ -48,11 +48,14 @@ On subscribing, `…9601` immediately pushed 16 bytes of high-entropy data:
 41 bc 78 32 ed 1c 5b bc 5f 8e fb 97 13 6a 7d 59
 ```
 
-Sixteen random-looking bytes unprompted on connect looks like a challenge/nonce,
-which would mean an authentication handshake before the device accepts commands.
-Not yet confirmed — it could equally be an opaque status blob. Worth re-reading on a
-second connection: a value that **changes per connection** is a nonce, one that stays
-**identical** is a device identifier or status.
+**Resolved 2026-09-10 by `ledhat_gatt.py --probe`: byte-identical across three
+separate connections.** So it is not a challenge — it is a fixed identifier or status
+blob, and there is **no authentication handshake** between us and the display
+commands. High entropy but constant fits a per-unit key, serial number or MAC-derived
+id burned in at the factory.
+
+That closes the worst case for this project: whatever the frame format turns out to
+be, we can write it to the device directly without first negotiating a session.
 
 Pressing the hat's mode button during a 20s listen produced no further notifications.
 
@@ -68,9 +71,7 @@ with earbuds, not a display. Almost certainly a neighbour's earbuds.
 ## Open questions
 
 1. ~~Is `DSD-3AF2B6` actually the hat?~~ **Confirmed** by power-cycle A/B.
-2. **Is the 16-byte notify a nonce?** Run `ledhat_gatt.py <addr> --probe`, which
-   connects three times and compares the opening payload. Changing per connection
-   means an auth handshake stands between us and the display commands; fixed means
-   it is an identifier we can ignore.
+2. ~~Is the 16-byte notify a nonce?~~ **No** — stable across three connections, so
+   no auth handshake. It is an identifier we can ignore.
 3. **Which write characteristic takes display commands?** `…9600`, `…960a`, `…960b`
    and `ae01` are four candidate sinks. The app's own frames will say which.
